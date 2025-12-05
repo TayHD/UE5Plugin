@@ -66,8 +66,8 @@ public:
     // ===== REFERENCES (Set in Editor) - WILL ADD BACK WHEN WE BUILD THOSE ACTORS =====
     
     // TODO: Uncomment when DoorActor is created
-    // UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room References")
-    // ADoorActor* RoomDoor;
+     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room References")
+     ADoorActor* RoomDoor;
     
     // TODO: Uncomment when ACUnit is created
     // UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room References")
