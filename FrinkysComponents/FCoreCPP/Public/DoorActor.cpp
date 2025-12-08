@@ -19,9 +19,14 @@ ADoorActor::ADoorActor()
     DoorFrame->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     DoorFrame->SetCollisionResponseToAllChannels(ECR_Block);
     
-    // Create door mesh (animated)
+    // Create hinge pivot (this is what rotates)
+    HingePivot = CreateDefaultSubobject<USceneComponent>(TEXT("HingePivot"));
+    HingePivot->SetupAttachment(DoorRoot);
+    HingePivot->SetMobility(EComponentMobility::Movable);
+    
+    // Create door mesh (attaches to hinge pivot so it rotates around hinge)
     DoorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DoorMesh"));
-    DoorMesh->SetupAttachment(DoorRoot);
+    DoorMesh->SetupAttachment(HingePivot); // Attaches to hinge, not root
     DoorMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision); // Frame handles collision
     
     // Create interaction point
@@ -32,7 +37,7 @@ ADoorActor::ADoorActor()
     
     // Create doorway blocker (invisible collision)
     DoorwayBlocker = CreateDefaultSubobject<UBoxComponent>(TEXT("DoorwayBlocker"));
-    DoorwayBlocker->SetupAttachment(DoorRoot);
+    DoorwayBlocker->SetupAttachment(HingePivot); // CHANGED: Was DoorRoot, now HingePivot
     DoorwayBlocker->SetBoxExtent(FVector(10.0f, 50.0f, 100.0f)); // Thin blocking volume
     DoorwayBlocker->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     DoorwayBlocker->SetCollisionResponseToAllChannels(ECR_Ignore);
@@ -243,11 +248,11 @@ void ADoorActor::AnimateDoor(float DeltaTime)
     {
         CurrentDoorRotation = FMath::FInterpTo(CurrentDoorRotation, TargetDoorRotation, DeltaTime, DoorOpenSpeed);
         
-        // Apply rotation to door mesh
-        if (DoorMesh)
+        // Apply rotation to hinge pivot (which rotates the door mesh)
+        if (HingePivot)
         {
             FRotator NewRotation = FRotator(0.0f, CurrentDoorRotation, 0.0f);
-            DoorMesh->SetRelativeRotation(NewRotation);
+            HingePivot->SetRelativeRotation(NewRotation);
         }
     }
 }

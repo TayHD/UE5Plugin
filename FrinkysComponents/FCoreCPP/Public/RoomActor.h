@@ -6,6 +6,9 @@
 #include "Components/BoxComponent.h"
 #include "RoomActor.generated.h"
 
+// Forward declarations
+class ADoorActor;
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnRoomStateChanged, class ARoomActor*, Room);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGuestAssigned, class ARoomActor*, Room, AActor*, Guest);
 
@@ -63,11 +66,11 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     USceneComponent* RoomRoot;
     
-    // ===== REFERENCES (Set in Editor) - WILL ADD BACK WHEN WE BUILD THOSE ACTORS =====
+    // ===== REFERENCES (Set in Editor) =====
     
-    // TODO: Uncomment when DoorActor is created
-     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room References")
-     ADoorActor* RoomDoor;
+    // The door for this room (drag from level)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room References")
+    ADoorActor* RoomDoor;
     
     // TODO: Uncomment when ACUnit is created
     // UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Room References")

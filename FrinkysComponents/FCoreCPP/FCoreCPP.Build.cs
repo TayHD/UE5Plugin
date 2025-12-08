@@ -8,7 +8,14 @@ public class FCoreCPP : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
     
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore" });
+		PublicDependencyModuleNames.AddRange(new string[] { 
+			"Core", 
+			"CoreUObject", 
+			"Engine", 
+			"InputCore",
+			"AIModule",              // AI controller and behavior trees
+			"NavigationSystem"       // Pathfinding and NavMesh
+		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{

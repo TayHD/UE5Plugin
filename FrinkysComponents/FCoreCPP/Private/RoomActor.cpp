@@ -1,5 +1,6 @@
 // RoomActor.cpp
 #include "RoomActor.h"
+#include "DoorActor.h"
 #include "Net/UnrealNetwork.h"
 
 ARoomActor::ARoomActor()
@@ -241,14 +242,24 @@ void ARoomActor::Server_SetRoomState_Implementation(ERoomState NewState)
 void ARoomActor::LockDoor()
 {
     bIsDoorLocked = true;
-    // TODO: When DoorActor exists, call RoomDoor->SetLocked(true);
+    
+    if (RoomDoor)
+    {
+        RoomDoor->Server_SetLocked(true);
+    }
+    
     UE_LOG(LogTemp, Log, TEXT("Room %d: Door locked"), RoomNumber);
 }
 
 void ARoomActor::UnlockDoor()
 {
     bIsDoorLocked = false;
-    // TODO: When DoorActor exists, call RoomDoor->SetLocked(false);
+    
+    if (RoomDoor)
+    {
+        RoomDoor->Server_SetLocked(false);
+    }
+    
     UE_LOG(LogTemp, Log, TEXT("Room %d: Door unlocked"), RoomNumber);
 }
 
