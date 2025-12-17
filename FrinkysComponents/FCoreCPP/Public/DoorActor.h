@@ -2,8 +2,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/Actor.h"
-#include "FrinkysComponents/General/FC_InteractionPoint.h"
+#include "InteractableActor.h"
+#include "Components/BoxComponent.h"
 #include "DoorActor.generated.h"
 
 UENUM(BlueprintType)
@@ -16,7 +16,7 @@ enum class EDoorState : uint8
 };
 
 UCLASS()
-class FCORECPP_API ADoorActor : public AActor
+class FCORECPP_API ADoorActor : public AInteractableActor
 {
     GENERATED_BODY()
     
@@ -30,9 +30,6 @@ public:
     // ===== COMPONENTS =====
     
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-    USceneComponent* DoorRoot;
-    
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     UStaticMeshComponent* DoorFrame;
     
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -44,9 +41,6 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     UBoxComponent* DoorwayBlocker; // Blocks doorway when closed
     
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-    UFC_InteractionPoint* InteractionPoint;
-    
     // ===== STATE =====
     
     UPROPERTY(ReplicatedUsing=OnRep_DoorState, BlueprintReadOnly, Category = "Door State")
@@ -54,6 +48,13 @@ public:
     
     UPROPERTY(Replicated, BlueprintReadOnly, Category = "Door State")
     bool bIsLocked;
+    
+    // Replicated rotation values so clients can animate smoothly
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Door State")
+    float CurrentRotation; // Current door rotation
+    
+    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Door State")
+    float TargetRotation; // Target rotation based on state
     
     // ===== SETTINGS =====
     
@@ -68,7 +69,7 @@ public:
     
     // ===== FUNCTIONS =====
     
-    // Regular functions called by server (NO RPC)
+    // Door-specific functions
     UFUNCTION(BlueprintCallable, Category = "Door")
     void OpenDoor();
     
@@ -88,19 +89,17 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Door")
     bool IsLocked() const { return bIsLocked; }
     
+    // ===== OVERRIDE INTERACTABLE FUNCTIONS =====
+    
+    virtual void OnInteractionStarted_Implementation(AActor* Interactor) override;
+    virtual bool CanInteract(AActor* Interactor) const override;
+    
     // ===== REPLICATION CALLBACKS =====
     
     UFUNCTION()
     void OnRep_DoorState();
     
 private:
-    // Player interaction callback
-    UFUNCTION()
-    void OnDoorInteracted(APawn* Interactor);
-    
-    // Animation
+    // Animation (runs on all machines)
     void AnimateDoor(float DeltaTime);
-    
-    float CurrentRotation; // Current door rotation
-    float TargetRotation; // Target rotation based on state
 };

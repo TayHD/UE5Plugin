@@ -1,7 +1,5 @@
 ﻿// DoorActor.cpp
 #include "DoorActor.h"
-#include "HotelPlayerController.h"
-#include "Components/BoxComponent.h"
 #include "Net/UnrealNetwork.h"
 
 ADoorActor::ADoorActor()
@@ -9,19 +7,19 @@ ADoorActor::ADoorActor()
     PrimaryActorTick.bCanEverTick = true;
     bReplicates = true;
     
-    // Create root
-    DoorRoot = CreateDefaultSubobject<USceneComponent>(TEXT("DoorRoot"));
-    RootComponent = DoorRoot;
+    // Set interaction type to instant (door toggles immediately)
+    InteractionType = EInteractionType::Instant;
+    InteractionName = "Open Door";
     
     // Create door frame (static)
     DoorFrame = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DoorFrame"));
-    DoorFrame->SetupAttachment(DoorRoot);
+    DoorFrame->SetupAttachment(InteractableRoot);
     DoorFrame->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     DoorFrame->SetCollisionResponseToAllChannels(ECR_Block);
     
     // Create hinge pivot (movable)
     HingePivot = CreateDefaultSubobject<USceneComponent>(TEXT("HingePivot"));
-    HingePivot->SetupAttachment(DoorRoot);
+    HingePivot->SetupAttachment(InteractableRoot);
     HingePivot->SetMobility(EComponentMobility::Movable);
     
     // Create door mesh (rotates with pivot)
@@ -37,12 +35,6 @@ ADoorActor::ADoorActor()
     DoorwayBlocker->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     DoorwayBlocker->SetCollisionResponseToAllChannels(ECR_Block);
     
-    // Create interaction point
-    InteractionPoint = CreateDefaultSubobject<UFC_InteractionPoint>(TEXT("InteractionPoint"));
-    InteractionPoint->SetupAttachment(DoorRoot);
-    InteractionPoint->InteractionName = "Open Door";
-    InteractionPoint->InteractionTime = 0.0f; // Instant
-    
     // Initialize state
     CurrentState = EDoorState::Closed;
     bIsLocked = false;
@@ -56,17 +48,13 @@ void ADoorActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifeti
     
     DOREPLIFETIME(ADoorActor, CurrentState);
     DOREPLIFETIME(ADoorActor, bIsLocked);
+    DOREPLIFETIME(ADoorActor, CurrentRotation);
+    DOREPLIFETIME(ADoorActor, TargetRotation);
 }
 
 void ADoorActor::BeginPlay()
 {
     Super::BeginPlay();
-    
-    // Bind interaction
-    if (InteractionPoint)
-    {
-        InteractionPoint->OnInteract.AddDynamic(this, &ADoorActor::OnDoorInteracted);
-    }
     
     // Apply initial lock state
     if (HasAuthority())
@@ -79,7 +67,7 @@ void ADoorActor::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
     
-    // Animate door rotation
+    // Animate door rotation (runs on all machines)
     AnimateDoor(DeltaTime);
 }
 
@@ -107,9 +95,9 @@ void ADoorActor::OpenDoor()
     TargetRotation = OpenAngle;
     
     // Update interaction prompt
-    if (InteractionPoint)
+    if (PlayerInteractionPoint)
     {
-        InteractionPoint->InteractionName = "Close Door";
+        PlayerInteractionPoint->InteractionName = "Close Door";
     }
     
     UE_LOG(LogTemp, Log, TEXT("Door: Opening"));
@@ -133,9 +121,9 @@ void ADoorActor::CloseDoor()
     TargetRotation = 0.0f;
     
     // Update interaction prompt
-    if (InteractionPoint)
+    if (PlayerInteractionPoint)
     {
-        InteractionPoint->InteractionName = "Open Door";
+        PlayerInteractionPoint->InteractionName = "Open Door";
     }
     
     UE_LOG(LogTemp, Log, TEXT("Door: Closing"));
@@ -153,10 +141,10 @@ void ADoorActor::SetLocked(bool bLocked)
     bIsLocked = bLocked;
     
     // Update interaction point
-    if (InteractionPoint)
+    if (PlayerInteractionPoint)
     {
-        InteractionPoint->isEnabled = !bIsLocked;
-        InteractionPoint->InteractionName = bIsLocked ? "Locked" : (IsOpen() ? "Close Door" : "Open Door");
+        PlayerInteractionPoint->isEnabled = !bIsLocked;
+        PlayerInteractionPoint->InteractionName = bIsLocked ? "Locked" : (IsOpen() ? "Close Door" : "Open Door");
     }
     
     // Disable blocker if open and locked (guest is inside)
@@ -168,38 +156,53 @@ void ADoorActor::SetLocked(bool bLocked)
     UE_LOG(LogTemp, Log, TEXT("Door lock set: %s"), bIsLocked ? TEXT("LOCKED") : TEXT("UNLOCKED"));
 }
 
+void ADoorActor::OnInteractionStarted_Implementation(AActor* Interactor)
+{
+    // Called when player/AI interacts with door
+    // Toggle door open/close based on current state
+    
+    if (IsClosed())
+    {
+        OpenDoor();
+    }
+    else if (IsOpen())
+    {
+        CloseDoor();
+    }
+}
+
+bool ADoorActor::CanInteract(AActor* Interactor) const
+{
+    // Call base implementation first
+    if (!Super::CanInteract(Interactor))
+    {
+        return false;
+    }
+    
+    // Door-specific: Can't interact if locked
+    if (bIsLocked)
+    {
+        return false;
+    }
+    
+    return true;
+}
+
 void ADoorActor::OnRep_DoorState()
 {
     // Update visual state on clients when replicated
     UE_LOG(LogTemp, Log, TEXT("Door state replicated: %d"), (int32)CurrentState);
 }
 
-void ADoorActor::OnDoorInteracted(APawn* Interactor)
-{
-    // Player pressed E - call server RPC on their PlayerController
-    AHotelPlayerController* PC = Cast<AHotelPlayerController>(Interactor->GetController());
-    if (!PC)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Door: Interactor has no HotelPlayerController"));
-        return;
-    }
-    
-    // Determine if player wants to open or close
-    bool bWantsOpen = IsClosed();
-    
-    // Call server RPC on player's controller
-    PC->Server_RequestDoorInteraction(this, bWantsOpen);
-}
-
 void ADoorActor::AnimateDoor(float DeltaTime)
 {
-    // Smoothly rotate door to target
+    // Smoothly rotate door to target (runs on all machines)
     if (FMath::IsNearlyEqual(CurrentRotation, TargetRotation, 0.1f))
     {
         // Reached target
         CurrentRotation = TargetRotation;
         
-        // Update state
+        // Update state (only on server)
         if (HasAuthority())
         {
             if (CurrentState == EDoorState::Opening)
@@ -214,11 +217,11 @@ void ADoorActor::AnimateDoor(float DeltaTime)
     }
     else
     {
-        // Interpolate rotation
+        // Interpolate rotation (happens on all machines)
         CurrentRotation = FMath::FInterpTo(CurrentRotation, TargetRotation, DeltaTime, OpenSpeed);
     }
     
-    // Apply rotation to hinge pivot
+    // Apply rotation to hinge pivot (visual update on all machines)
     if (HingePivot)
     {
         HingePivot->SetRelativeRotation(FRotator(0.0f, CurrentRotation, 0.0f));

@@ -3,13 +3,13 @@
 
 #include "CoreMinimal.h"
 #include "AIController.h"
-#include "Navigation/PathFollowingComponent.h"
 #include "GuestAIController.generated.h"
 
 // Forward declarations
 class AGuestPawn;
 class ACheckInDesk;
 class ARoomActor;
+class AInteractableActor;
 
 UCLASS()
 class FCORECPP_API AGuestAIController : public AAIController
@@ -19,12 +19,23 @@ class FCORECPP_API AGuestAIController : public AAIController
 public:
 	AGuestAIController();
     
-	virtual void BeginPlay() override;
 	virtual void OnPossess(APawn* InPawn) override;
     
-	// ===== NAVIGATION =====
+	// ===== PROPERTIES =====
     
-	// Move to check-in desk and join queue
+	UPROPERTY(BlueprintReadOnly, Category = "Guest AI")
+	AGuestPawn* ControlledGuest;
+    
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guest AI")
+	float AcceptanceRadius = 100.0f; // How close to get to destination
+    
+	// Current interactable the AI is moving to
+	UPROPERTY(BlueprintReadOnly, Category = "Guest AI")
+	AInteractableActor* TargetInteractable;
+    
+	// ===== NAVIGATION FUNCTIONS =====
+    
+	// Move to check-in desk
 	UFUNCTION(BlueprintCallable, Category = "Guest AI")
 	void MoveToCheckInDesk();
     
@@ -32,28 +43,24 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Guest AI")
 	void MoveToRoom(ARoomActor* Room);
     
-	// Move to exit and leave hotel
+	// Move to hotel exit
 	UFUNCTION(BlueprintCallable, Category = "Guest AI")
 	void MoveToExit();
     
-	// Stop all movement (renamed to avoid conflict with base class)
+	// Stop guest movement
 	UFUNCTION(BlueprintCallable, Category = "Guest AI")
 	void StopGuestMovement();
     
-	// ===== REFERENCES =====
+	// ===== AI INTERACTION =====
     
-	UPROPERTY(BlueprintReadOnly, Category = "Guest AI")
-	AGuestPawn* ControlledGuest;
+	// Move to an interactable and use it when reached
+	UFUNCTION(BlueprintCallable, Category = "Guest AI")
+	void MoveToAndInteract(AInteractableActor* Interactable);
     
-	// ===== SETTINGS =====
-    
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Guest AI")
-	float AcceptanceRadius = 100.0f; // How close to get to destination
-    
-private:
-	// Movement completion callbacks (NO UFUNCTION - raw C++ delegate)
+protected:
+	// Movement completion handler
 	void OnMoveCompleted(FAIRequestID RequestID, const FPathFollowingResult& Result);
     
-	// Find the check-in desk in the level
+	// Helper to find check-in desk
 	ACheckInDesk* FindCheckInDesk();
 };

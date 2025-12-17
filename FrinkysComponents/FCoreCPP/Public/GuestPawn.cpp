@@ -2,6 +2,7 @@
 #include "GuestPawn.h"
 #include "RoomActor.h"
 #include "GuestAIController.h"
+#include "DoorActor.h"  // ADD THIS LINE
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Net/UnrealNetwork.h"
@@ -92,13 +93,17 @@ void AGuestPawn::Server_SetBehaviorState_Implementation(EGuestBehaviorState NewS
     switch (NewState)
     {
         case EGuestBehaviorState::GoingToRoom:
-            if (AIController && AssignedRoom)
+        {
+            if (AIController && AssignedRoom && AssignedRoom->DoorActor)
             {
-                AIController->MoveToRoom(AssignedRoom);
+                // First, move to and open the door
+                AIController->MoveToAndInteract(AssignedRoom->DoorActor);
             }
             break;
-            
+        }
+        
         case EGuestBehaviorState::InRoom:
+        {
             if (AIController)
             {
                 AIController->StopGuestMovement();
@@ -109,14 +114,17 @@ void AGuestPawn::Server_SetBehaviorState_Implementation(EGuestBehaviorState NewS
             }
             StartCheckOutTimer();
             break;
-            
+        }
+        
         case EGuestBehaviorState::Leaving:
+        {
             if (AIController)
             {
                 AIController->MoveToExit();
             }
             break;
-            
+        }
+        
         default:
             break;
     }

@@ -9,7 +9,7 @@
 // Forward declarations
 class ACheckInDesk;
 class AGuestPawn;
-class ADoorActor;
+class AInteractableActor;
 
 UCLASS()
 class FCORECPP_API AHotelPlayerController : public APlayerController
@@ -26,17 +26,11 @@ public:
 	UFUNCTION(BlueprintCallable, Server, Reliable, Category = "Hotel Interactions")
 	void Server_RequestCheckIn(ACheckInDesk* Desk, FGuestCheckInResponse Response);
     
-	// ===== DOOR INTERACTION =====
+	// ===== INTERACTABLE ACTOR (UNIVERSAL) =====
     
-	// Client calls this to request door open/close
+	// Universal interaction RPC for all InteractableActors (including doors)
 	UFUNCTION(BlueprintCallable, Server, Reliable, Category = "Hotel Interactions")
-	void Server_RequestDoorInteraction(ADoorActor* Door, bool bWantsOpen);
-    
-	// ===== FUTURE INTERACTIONS =====
-    
-	// Examples of future interactions that will follow same pattern:
-	// Server_RequestVendingPurchase(AVendingMachine* Machine, int32 ItemID)
-	// Server_RequestPhoneCall(APhoneActor* Phone, EPhoneCallType CallType)
+	void Server_RequestInteraction(AInteractableActor* Interactable);
     
 protected:
 	virtual void BeginPlay() override;

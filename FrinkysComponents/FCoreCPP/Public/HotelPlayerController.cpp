@@ -2,7 +2,7 @@
 #include "HotelPlayerController.h"
 #include "CheckInDesk.h"
 #include "GuestPawn.h"
-#include "DoorActor.h"
+#include "InteractableActor.h"
 
 AHotelPlayerController::AHotelPlayerController()
 {
@@ -32,12 +32,15 @@ void AHotelPlayerController::Server_RequestCheckIn_Implementation(ACheckInDesk* 
     }
     
     // Validate player is actually at the desk (optional anti-cheat)
-    float DistanceToDesk = FVector::Dist(GetPawn()->GetActorLocation(), Desk->GetActorLocation());
-    if (DistanceToDesk > 500.0f) // Max interaction distance
+    if (GetPawn())
     {
-        UE_LOG(LogTemp, Warning, TEXT("HotelPC: Player %s tried to check-in from %f units away (too far!)"), 
-               *GetName(), DistanceToDesk);
-        return;
+        float DistanceToDesk = FVector::Dist(GetPawn()->GetActorLocation(), Desk->GetActorLocation());
+        if (DistanceToDesk > 500.0f) // Max interaction distance
+        {
+            UE_LOG(LogTemp, Warning, TEXT("HotelPC: Player %s tried to check-in from %f units away (too far!)"), 
+                   *GetName(), DistanceToDesk);
+            return;
+        }
     }
     
     // Validate there's a guest to process
@@ -54,45 +57,38 @@ void AHotelPlayerController::Server_RequestCheckIn_Implementation(ACheckInDesk* 
            *GetName(), Response.bApproved ? TEXT("Yes") : TEXT("No"));
 }
 
-void AHotelPlayerController::Server_RequestDoorInteraction_Implementation(ADoorActor* Door, bool bWantsOpen)
+void AHotelPlayerController::Server_RequestInteraction_Implementation(AInteractableActor* Interactable)
 {
     // This runs on the server (called by client via RPC)
     
     if (!HasAuthority())
     {
-        UE_LOG(LogTemp, Error, TEXT("HotelPC: Server_RequestDoorInteraction called on client! This should never happen."));
+        UE_LOG(LogTemp, Error, TEXT("HotelPC: Server_RequestInteraction called on client! This should never happen."));
         return;
     }
     
-    // Validate door exists
-    if (!Door)
+    // Validate interactable exists
+    if (!Interactable)
     {
-        UE_LOG(LogTemp, Warning, TEXT("HotelPC: Server_RequestDoorInteraction - Door is null"));
+        UE_LOG(LogTemp, Warning, TEXT("HotelPC: Server_RequestInteraction - Interactable is null"));
         return;
     }
     
     // Validate player is close enough (anti-cheat)
     if (GetPawn())
     {
-        float DistanceToDoor = FVector::Dist(GetPawn()->GetActorLocation(), Door->GetActorLocation());
-        if (DistanceToDoor > 500.0f) // Max interaction distance
+        float DistanceToInteractable = FVector::Dist(GetPawn()->GetActorLocation(), Interactable->GetActorLocation());
+        if (DistanceToInteractable > 500.0f) // Max interaction distance
         {
-            UE_LOG(LogTemp, Warning, TEXT("HotelPC: Player %s tried to interact with door from %f units away (too far!)"), 
-                   *GetName(), DistanceToDoor);
+            UE_LOG(LogTemp, Warning, TEXT("HotelPC: Player %s tried to interact from %f units away (too far!)"), 
+                   *GetName(), DistanceToInteractable);
             return;
         }
     }
     
-    // All validation passed - interact with door
-    if (bWantsOpen)
-    {
-        Door->OpenDoor();
-    }
-    else
-    {
-        Door->CloseDoor();
-    }
+    // All validation passed - start interaction
+    Interactable->StartInteraction(GetPawn());
     
-    UE_LOG(LogTemp, Log, TEXT("HotelPC: Player %s %s door"), 
-           *GetName(), bWantsOpen ? TEXT("opened") : TEXT("closed"));
+    UE_LOG(LogTemp, Log, TEXT("HotelPC: Player %s interacted with %s"), 
+           *GetName(), *Interactable->GetName());
 }

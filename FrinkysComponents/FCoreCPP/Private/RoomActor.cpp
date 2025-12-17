@@ -1,6 +1,8 @@
 // RoomActor.cpp
 #include "RoomActor.h"
 #include "DoorActor.h"
+#include "GuestPawn.h"
+#include "Components/BoxComponent.h"
 #include "Net/UnrealNetwork.h"
 
 ARoomActor::ARoomActor()
@@ -12,22 +14,18 @@ ARoomActor::ARoomActor()
     RoomRoot = CreateDefaultSubobject<USceneComponent>(TEXT("RoomRoot"));
     RootComponent = RoomRoot;
     
-    // Create room volume (for visualization in editor)
-    RoomVolume = CreateDefaultSubobject<UBoxComponent>(TEXT("RoomVolume"));
-    RoomVolume->SetupAttachment(RoomRoot);
-    RoomVolume->SetBoxExtent(FVector(300.0f, 300.0f, 150.0f)); // Default room size
-    RoomVolume->SetCollisionEnabled(ECollisionEnabled::NoCollision); // Just for visualization
+    // Create room bounds
+    RoomBounds = CreateDefaultSubobject<UBoxComponent>(TEXT("RoomBounds"));
+    RoomBounds->SetupAttachment(RoomRoot);
+    RoomBounds->SetBoxExtent(FVector(300.0f, 300.0f, 150.0f)); // Default room size
+    RoomBounds->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    RoomBounds->SetCollisionResponseToAllChannels(ECR_Overlap);
     
     // Initialize state
-    CurrentState = ERoomState::Vacant_Clean;
-    CleanlinessLevel = 100.0f;
-    bIsDoorLocked = false;
+    CurrentState = ERoomState::Clean;
     CurrentGuest = nullptr;
-    
-    // Default required cleaning tasks
-    RequiredCleaningTasks.Add(ECleaningTask::MakeBed);
-    RequiredCleaningTasks.Add(ECleaningTask::CleanBathroom);
-    RequiredCleaningTasks.Add(ECleaningTask::EmptyTrash);
+    bIsOccupied = false;
+    bIsClean = true;
 }
 
 void ARoomActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -36,68 +34,58 @@ void ARoomActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifeti
     
     DOREPLIFETIME(ARoomActor, CurrentState);
     DOREPLIFETIME(ARoomActor, CurrentGuest);
-    DOREPLIFETIME(ARoomActor, CleanlinessLevel);
-    DOREPLIFETIME(ARoomActor, ActiveIssues);
-    DOREPLIFETIME(ARoomActor, bIsDoorLocked);
+    DOREPLIFETIME(ARoomActor, bIsOccupied);
+    DOREPLIFETIME(ARoomActor, bIsClean);
 }
 
 void ARoomActor::BeginPlay()
 {
     Super::BeginPlay();
     
-    // Set initial door state
-    if (CurrentState == ERoomState::Occupied)
+    // Only set initial door state on server
+    if (HasAuthority() && DoorActor)
     {
-        LockDoor();
-    }
-    else
-    {
-        UnlockDoor();
+        DoorActor->SetLocked(false); // Start unlocked
+        UE_LOG(LogTemp, Log, TEXT("Room %d: Door unlocked"), RoomNumber);
     }
 }
 
-void ARoomActor::Server_AssignGuest_Implementation(AActor* Guest)
+void ARoomActor::Server_AssignGuest(AGuestPawn* Guest)
 {
+    // Should only be called on server
     if (!HasAuthority())
     {
+        UE_LOG(LogTemp, Error, TEXT("Room: Server_AssignGuest called on client!"));
         return;
     }
     
-    // Validate
     if (!Guest)
     {
         UE_LOG(LogTemp, Warning, TEXT("Room %d: Tried to assign null guest"), RoomNumber);
         return;
     }
     
-    if (CurrentState != ERoomState::Vacant_Clean)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Room %d: Cannot assign guest, room not clean (State: %d)"), 
-               RoomNumber, (int32)CurrentState);
-        return;
-    }
-    
     // Assign guest
     CurrentGuest = Guest;
+    bIsOccupied = true;
     CurrentState = ERoomState::Occupied;
     
     // Lock door
-    LockDoor();
+    if (DoorActor)
+    {
+        DoorActor->SetLocked(true);
+        UE_LOG(LogTemp, Log, TEXT("Room %d: Door locked"), RoomNumber);
+    }
     
-    // Trigger replication
-    OnRep_RoomState();
-    
-    // Broadcast events
-    OnGuestAssigned.Broadcast(this, Guest);
-    
-    UE_LOG(LogTemp, Log, TEXT("Room %d: Guest assigned (%s)"), 
-           RoomNumber, *Guest->GetName());
+    UE_LOG(LogTemp, Log, TEXT("Room %d: Guest assigned (%s)"), RoomNumber, *Guest->GetName());
 }
 
-void ARoomActor::Server_CheckOutGuest_Implementation()
+void ARoomActor::Server_CheckOutGuest()
 {
+    // Should only be called on server
     if (!HasAuthority())
     {
+        UE_LOG(LogTemp, Error, TEXT("Room: Server_CheckOutGuest called on client!"));
         return;
     }
     
@@ -107,207 +95,59 @@ void ARoomActor::Server_CheckOutGuest_Implementation()
         return;
     }
     
+    UE_LOG(LogTemp, Log, TEXT("Room %d: Guest %s checked out"), RoomNumber, *CurrentGuest->GetName());
+    
     // Clear guest
-    AActor* PreviousGuest = CurrentGuest;
     CurrentGuest = nullptr;
+    bIsOccupied = false;
+    CurrentState = ERoomState::Dirty;
     
-    // Room is now dirty and needs cleaning
-    CurrentState = ERoomState::Vacant_Dirty;
-    CleanlinessLevel = 0.0f;
-    CompletedTasks.Empty();
-    
-    // Unlock door so players can enter to clean
-    UnlockDoor();
-    
-    // Trigger replication
-    OnRep_RoomState();
-    OnRep_Cleanliness();
-    
-    UE_LOG(LogTemp, Log, TEXT("Room %d: Guest checked out, room now dirty"), RoomNumber);
+    // Unlock door
+    if (DoorActor)
+    {
+        DoorActor->SetLocked(false);
+        UE_LOG(LogTemp, Log, TEXT("Room %d: Door unlocked"), RoomNumber);
+    }
 }
 
-void ARoomActor::Server_CompleteCleaningTask_Implementation(ECleaningTask Task)
+void ARoomActor::Server_CleanRoom()
 {
+    // Should only be called on server
     if (!HasAuthority())
     {
+        UE_LOG(LogTemp, Error, TEXT("Room: Server_CleanRoom called on client!"));
         return;
     }
     
-    // Check if task is required
-    if (!RequiredCleaningTasks.Contains(Task))
+    if (bIsOccupied)
     {
-        UE_LOG(LogTemp, Warning, TEXT("Room %d: Task not required for this room"), RoomNumber);
+        UE_LOG(LogTemp, Warning, TEXT("Room %d: Cannot clean - room is occupied"), RoomNumber);
         return;
     }
     
-    // Check if already completed
-    if (CompletedTasks.Contains(Task))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Room %d: Task already completed"), RoomNumber);
-        return;
-    }
+    bIsClean = true;
+    CurrentState = ERoomState::Clean;
     
-    // Mark task as completed
-    CompletedTasks.Add(Task);
-    
-    // Increase cleanliness
-    CleanlinessLevel = FMath::Clamp(CleanlinessLevel + CleanlinessPerTask, 0.0f, 100.0f);
-    
-    // Check if all tasks are done
-    if (IsFullyCleaned())
-    {
-        CurrentState = ERoomState::Vacant_Clean;
-        CleanlinessLevel = 100.0f;
-        UE_LOG(LogTemp, Log, TEXT("Room %d: Cleaning complete, room ready for guests"), RoomNumber);
-    }
-    
-    // Trigger replication
-    OnRep_Cleanliness();
-    OnRep_RoomState();
-    
-    UE_LOG(LogTemp, Log, TEXT("Room %d: Completed task (Cleanliness: %.1f%%)"), 
-           RoomNumber, CleanlinessLevel);
+    UE_LOG(LogTemp, Log, TEXT("Room %d: Cleaned"), RoomNumber);
 }
 
-void ARoomActor::Server_AddIssue_Implementation(ERoomIssue Issue)
+void ARoomActor::Server_DirtyRoom()
 {
+    // Should only be called on server
     if (!HasAuthority())
     {
+        UE_LOG(LogTemp, Error, TEXT("Room: Server_DirtyRoom called on client!"));
         return;
     }
     
-    if (Issue == ERoomIssue::None)
-    {
-        return;
-    }
+    bIsClean = false;
+    CurrentState = ERoomState::Dirty;
     
-    // Don't add duplicates
-    if (ActiveIssues.Contains(Issue))
-    {
-        return;
-    }
-    
-    ActiveIssues.Add(Issue);
-    
-    // If room was clean, mark as maintenance
-    if (CurrentState == ERoomState::Vacant_Clean)
-    {
-        CurrentState = ERoomState::Maintenance;
-        OnRep_RoomState();
-    }
-    
-    UE_LOG(LogTemp, Warning, TEXT("Room %d: Issue added - %d"), RoomNumber, (int32)Issue);
-}
-
-void ARoomActor::Server_ResolveIssue_Implementation(ERoomIssue Issue)
-{
-    if (!HasAuthority())
-    {
-        return;
-    }
-    
-    // Remove issue
-    ActiveIssues.Remove(Issue);
-    
-    // If no more issues and room is in maintenance, restore previous state
-    if (ActiveIssues.Num() == 0 && CurrentState == ERoomState::Maintenance)
-    {
-        if (CleanlinessLevel >= 100.0f)
-        {
-            CurrentState = ERoomState::Vacant_Clean;
-        }
-        else
-        {
-            CurrentState = ERoomState::Vacant_Dirty;
-        }
-        OnRep_RoomState();
-    }
-    
-    UE_LOG(LogTemp, Log, TEXT("Room %d: Issue resolved - %d"), RoomNumber, (int32)Issue);
-}
-
-void ARoomActor::Server_SetRoomState_Implementation(ERoomState NewState)
-{
-    if (!HasAuthority())
-    {
-        return;
-    }
-    
-    CurrentState = NewState;
-    OnRep_RoomState();
-    
-    UE_LOG(LogTemp, Log, TEXT("Room %d: State set to %d"), RoomNumber, (int32)NewState);
-}
-
-void ARoomActor::LockDoor()
-{
-    bIsDoorLocked = true;
-    
-    if (RoomDoor)
-    {
-        RoomDoor->Server_SetLocked(true);
-    }
-    
-    UE_LOG(LogTemp, Log, TEXT("Room %d: Door locked"), RoomNumber);
-}
-
-void ARoomActor::UnlockDoor()
-{
-    bIsDoorLocked = false;
-    
-    if (RoomDoor)
-    {
-        RoomDoor->Server_SetLocked(false);
-    }
-    
-    UE_LOG(LogTemp, Log, TEXT("Room %d: Door unlocked"), RoomNumber);
-}
-
-int32 ARoomActor::GetRemainingCleaningTasks() const
-{
-    return RequiredCleaningTasks.Num() - CompletedTasks.Num();
+    UE_LOG(LogTemp, Log, TEXT("Room %d: Dirtied"), RoomNumber);
 }
 
 void ARoomActor::OnRep_RoomState()
 {
-    // Visual feedback based on state (can be expanded in Blueprint)
-    OnRoomStateChanged.Broadcast(this);
-    
-    // Update door lock state
-    if (CurrentState == ERoomState::Occupied)
-    {
-        LockDoor();
-    }
-    else
-    {
-        UnlockDoor();
-    }
-}
-
-void ARoomActor::OnRep_Cleanliness()
-{
-    // Visual feedback for cleanliness (can be expanded in Blueprint)
-    // Could show dust particles, dirty textures, etc.
-}
-
-bool ARoomActor::IsFullyCleaned() const
-{
-    // Check if all required tasks are completed
-    for (ECleaningTask Task : RequiredCleaningTasks)
-    {
-        if (!CompletedTasks.Contains(Task))
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
-void ARoomActor::UpdateRoomStateFromCleanliness()
-{
-    if (CleanlinessLevel >= 100.0f && CurrentState == ERoomState::Vacant_Dirty)
-    {
-        CurrentState = ERoomState::Vacant_Clean;
-        OnRep_RoomState();
-    }
+    // Update visuals on clients based on replicated state
+    UE_LOG(LogTemp, Log, TEXT("Room %d: State replicated - %d"), RoomNumber, (int32)CurrentState);
 }

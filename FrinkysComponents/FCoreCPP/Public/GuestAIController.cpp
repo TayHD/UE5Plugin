@@ -3,6 +3,7 @@
 #include "GuestPawn.h"
 #include "CheckInDesk.h"
 #include "RoomActor.h"
+#include "InteractableActor.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -10,114 +11,133 @@ AGuestAIController::AGuestAIController()
 {
     bSetControlRotationFromPawnOrientation = true;
     
-    // Create path following component
-    if (!GetPathFollowingComponent())
-    {
-        SetPathFollowingComponent(CreateDefaultSubobject<UPathFollowingComponent>(TEXT("PathFollowingComponent")));
-    }
-}
-
-void AGuestAIController::BeginPlay()
-{
-    Super::BeginPlay();
-    
-    // Bind movement completion
-    if (GetPathFollowingComponent())
-    {
-        GetPathFollowingComponent()->OnRequestFinished.AddUObject(this, &AGuestAIController::OnMoveCompleted);
-    }
+    // Initialize
+    ControlledGuest = nullptr;
+    TargetInteractable = nullptr;
 }
 
 void AGuestAIController::OnPossess(APawn* InPawn)
 {
     Super::OnPossess(InPawn);
     
+    // Store reference to guest
     ControlledGuest = Cast<AGuestPawn>(InPawn);
     
-    if (ControlledGuest)
+    if (!ControlledGuest)
     {
-        UE_LOG(LogTemp, Log, TEXT("AI Controller possessed guest: %s"), 
-               *ControlledGuest->GetGuestData().GuestName);
-        
-        // Start by moving to check-in desk
-        MoveToCheckInDesk();
+        UE_LOG(LogTemp, Error, TEXT("GuestAI: Possessed pawn is not a GuestPawn"));
+        return;
     }
+    
+    UE_LOG(LogTemp, Log, TEXT("AI Controller possessed guest: %s"), 
+           *ControlledGuest->GetGuestData().GuestName);
+    
+    // Bind movement completion (use GetPathFollowingComponent instead of PathFollowingComponent)
+    UPathFollowingComponent* PathFollowing = GetPathFollowingComponent();
+    if (PathFollowing)
+    {
+        PathFollowing->OnRequestFinished.AddUObject(this, &AGuestAIController::OnMoveCompleted);
+    }
+    
+    // Start moving to check-in desk
+    MoveToCheckInDesk();
 }
 
 void AGuestAIController::MoveToCheckInDesk()
 {
-    ACheckInDesk* Desk = FindCheckInDesk();
+    if (!ControlledGuest)
+    {
+        return;
+    }
     
+    // Find check-in desk
+    ACheckInDesk* Desk = FindCheckInDesk();
     if (!Desk)
     {
         UE_LOG(LogTemp, Error, TEXT("GuestAI: No check-in desk found in level!"));
         return;
     }
     
-    // Move to the desk's guest wait point
+    // Get destination from desk's guest wait point
     FVector Destination = Desk->GuestWaitPoint->GetComponentLocation();
     
-    EPathFollowingRequestResult::Type Result = MoveToLocation(Destination, AcceptanceRadius);
+    // Move to destination
+    MoveToLocation(Destination, AcceptanceRadius);
     
-    if (Result == EPathFollowingRequestResult::Failed)
-    {
-        UE_LOG(LogTemp, Error, TEXT("GuestAI: Failed to start pathfinding to desk"));
-    }
-    else
-    {
-        UE_LOG(LogTemp, Log, TEXT("GuestAI: %s moving to check-in desk"), 
-               *ControlledGuest->GetGuestData().GuestName);
-    }
+    UE_LOG(LogTemp, Log, TEXT("GuestAI: %s moving to check-in desk"), 
+           *ControlledGuest->GetGuestData().GuestName);
 }
 
 void AGuestAIController::MoveToRoom(ARoomActor* Room)
 {
     if (!Room)
     {
-        UE_LOG(LogTemp, Error, TEXT("GuestAI: Cannot move to null room"));
+        UE_LOG(LogTemp, Warning, TEXT("GuestAI: MoveToRoom - Room is null"));
         return;
     }
     
-    // Move to center of room
+    if (!ControlledGuest)
+    {
+        return;
+    }
+    
+    // Get room center as destination
     FVector Destination = Room->GetActorLocation();
     
-    EPathFollowingRequestResult::Type Result = MoveToLocation(Destination, AcceptanceRadius);
+    // Move to room
+    MoveToLocation(Destination, AcceptanceRadius);
     
-    if (Result == EPathFollowingRequestResult::Failed)
-    {
-        UE_LOG(LogTemp, Error, TEXT("GuestAI: Failed to start pathfinding to room"));
-    }
-    else
-    {
-        UE_LOG(LogTemp, Log, TEXT("GuestAI: %s moving to Room %d"), 
-               *ControlledGuest->GetGuestData().GuestName, Room->RoomNumber);
-    }
+    UE_LOG(LogTemp, Log, TEXT("GuestAI: %s moving to Room %d"), 
+           *ControlledGuest->GetGuestData().GuestName, Room->RoomNumber);
 }
 
 void AGuestAIController::MoveToExit()
 {
-    // For now, just move away from the hotel (we'll add proper exit points later)
-    FVector CurrentLocation = GetPawn()->GetActorLocation();
-    FVector ExitDirection = FVector(1000.0f, 0.0f, 0.0f); // Move 1000 units in X direction
-    FVector Destination = CurrentLocation + ExitDirection;
-    
-    EPathFollowingRequestResult::Type Result = MoveToLocation(Destination, AcceptanceRadius);
-    
-    if (Result != EPathFollowingRequestResult::Failed)
+    if (!ControlledGuest)
     {
-        UE_LOG(LogTemp, Log, TEXT("GuestAI: %s leaving hotel"), 
-               *ControlledGuest->GetGuestData().GuestName);
+        return;
     }
+    
+    // Simple exit: just move away from hotel (1000 units in X direction)
+    FVector CurrentLocation = ControlledGuest->GetActorLocation();
+    FVector ExitDirection = FVector(1000.0f, 0.0f, 0.0f);
+    FVector ExitLocation = CurrentLocation + ExitDirection;
+    
+    // Move to exit
+    MoveToLocation(ExitLocation, AcceptanceRadius);
+    
+    UE_LOG(LogTemp, Log, TEXT("GuestAI: %s moving to exit"), 
+           *ControlledGuest->GetGuestData().GuestName);
 }
 
 void AGuestAIController::StopGuestMovement()
 {
-    StopMovement(); // Call base class function
+    StopMovement();
     
     if (ControlledGuest)
     {
         UE_LOG(LogTemp, Log, TEXT("GuestAI: %s stopped moving"), 
                *ControlledGuest->GetGuestData().GuestName);
+    }
+}
+
+void AGuestAIController::MoveToAndInteract(AInteractableActor* Interactable)
+{
+    if (!Interactable)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("GuestAI: Tried to interact with null interactable"));
+        return;
+    }
+    
+    TargetInteractable = Interactable;
+    
+    // Move to the interactable
+    MoveToActor(Interactable, AcceptanceRadius);
+    
+    if (ControlledGuest)
+    {
+        UE_LOG(LogTemp, Log, TEXT("GuestAI: %s moving to interact with %s"), 
+               *ControlledGuest->GetGuestData().GuestName, *Interactable->GetName());
     }
 }
 
@@ -128,6 +148,7 @@ void AGuestAIController::OnMoveCompleted(FAIRequestID RequestID, const FPathFoll
         return;
     }
     
+    // Check if movement succeeded
     switch (Result.Code)
     {
         case EPathFollowingResult::Success:
@@ -135,31 +156,59 @@ void AGuestAIController::OnMoveCompleted(FAIRequestID RequestID, const FPathFoll
             UE_LOG(LogTemp, Log, TEXT("GuestAI: %s reached destination"), 
                    *ControlledGuest->GetGuestData().GuestName);
             
-            // Handle arrival based on current state
-            EGuestBehaviorState CurrentState = ControlledGuest->CurrentBehaviorState;
-            
-            if (CurrentState == EGuestBehaviorState::Approaching)
+            // Check what state we're in and what to do next
+            switch (ControlledGuest->CurrentBehaviorState)
             {
-                // Reached desk, add to queue
-                ACheckInDesk* Desk = FindCheckInDesk();
-                if (Desk)
+                case EGuestBehaviorState::Approaching:
                 {
-                    Desk->AddGuestToQueue(ControlledGuest);
+                    // Reached check-in desk wait point
+                    ACheckInDesk* Desk = FindCheckInDesk();
+                    if (Desk)
+                    {
+                        Desk->AddGuestToQueue(ControlledGuest);
+                    }
+                    break;
                 }
+                
+                case EGuestBehaviorState::GoingToRoom:
+                {
+                    // Check if we just reached a door to interact with
+                    if (TargetInteractable)
+                    {
+                        // We reached the door - interact with it (open it)
+                        TargetInteractable->StartInteraction(ControlledGuest);
+                        TargetInteractable = nullptr;
+                        
+                        // Now move into the room
+                        if (ControlledGuest->AssignedRoom)
+                        {
+                            MoveToRoom(ControlledGuest->AssignedRoom);
+                        }
+                    }
+                    else
+                    {
+                        // We're inside the room now
+                        ControlledGuest->Server_SetBehaviorState(EGuestBehaviorState::InRoom);
+                    }
+                    break;
+                }
+                
+                case EGuestBehaviorState::Leaving:
+                {
+                    // Reached exit - destroy guest
+                    if (ControlledGuest)
+                    {
+                        ControlledGuest->Destroy();
+                    }
+                    break;
+                }
+                
+                default:
+                    break;
             }
-            else if (CurrentState == EGuestBehaviorState::GoingToRoom)
-            {
-                // Reached room, enter it
-                ControlledGuest->Server_SetBehaviorState(EGuestBehaviorState::InRoom);
-            }
-            else if (CurrentState == EGuestBehaviorState::Leaving)
-            {
-                // Reached exit, destroy self
-                ControlledGuest->Destroy();
-            }
-            
             break;
         }
+        
         case EPathFollowingResult::Blocked:
         case EPathFollowingResult::Aborted:
         {
@@ -167,12 +216,14 @@ void AGuestAIController::OnMoveCompleted(FAIRequestID RequestID, const FPathFoll
                    *ControlledGuest->GetGuestData().GuestName);
             break;
         }
+        
         case EPathFollowingResult::Invalid:
         {
-            UE_LOG(LogTemp, Error, TEXT("GuestAI: %s pathfinding failed - invalid path"), 
+            UE_LOG(LogTemp, Error, TEXT("GuestAI: %s pathfinding invalid"), 
                    *ControlledGuest->GetGuestData().GuestName);
             break;
         }
+        
         default:
             break;
     }
@@ -180,6 +231,7 @@ void AGuestAIController::OnMoveCompleted(FAIRequestID RequestID, const FPathFoll
 
 ACheckInDesk* AGuestAIController::FindCheckInDesk()
 {
+    // Find check-in desk in level
     TArray<AActor*> FoundDesks;
     UGameplayStatics::GetAllActorsOfClass(GetWorld(), ACheckInDesk::StaticClass(), FoundDesks);
     
