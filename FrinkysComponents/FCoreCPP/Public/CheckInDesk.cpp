@@ -59,10 +59,12 @@ void ACheckInDesk::BeginPlay()
     }
 }
 
-void ACheckInDesk::Server_AddGuestToQueue_Implementation(AGuestPawn* Guest)
+void ACheckInDesk::AddGuestToQueue(AGuestPawn* Guest)
 {
+    // This should only be called on server (by AI)
     if (!HasAuthority())
     {
+        UE_LOG(LogTemp, Error, TEXT("CheckInDesk: AddGuestToQueue called on client!"));
         return;
     }
     
@@ -84,7 +86,7 @@ void ACheckInDesk::Server_AddGuestToQueue_Implementation(AGuestPawn* Guest)
     // If no one is being served, serve this guest immediately
     if (!CurrentGuest && !bIsOccupied)
     {
-        Server_ServeNextGuest();
+        ServeNextGuest();
     }
     
     UE_LOG(LogTemp, Log, TEXT("CheckInDesk: Guest %s added to queue (Position: %d)"), 
@@ -93,15 +95,14 @@ void ACheckInDesk::Server_AddGuestToQueue_Implementation(AGuestPawn* Guest)
 
 void ACheckInDesk::OpenCheckInUI(APawn* Clerk)
 {
+    // This runs locally on the client that interacted
+    // Just opens the UI, doesn't change server state
+    
     if (!CurrentGuest)
     {
         UE_LOG(LogTemp, Warning, TEXT("CheckInDesk: No guest to serve"));
         return;
     }
-    
-    // Mark desk as occupied
-    bIsOccupied = true;
-    CurrentClerk = Clerk;
     
     // Broadcast event (Blueprint will open UI)
     OnCheckInStarted.Broadcast(CurrentGuest, Clerk);
@@ -110,10 +111,13 @@ void ACheckInDesk::OpenCheckInUI(APawn* Clerk)
            *CurrentGuest->GetGuestData().GuestName);
 }
 
-void ACheckInDesk::Server_ProcessCheckIn_Implementation(APawn* Clerk, FGuestCheckInResponse Response)
+void ACheckInDesk::ProcessCheckIn(APawn* Clerk, FGuestCheckInResponse Response)
 {
+    // This is called by PlayerController's Server RPC
+    // Should ONLY run on server
     if (!HasAuthority())
     {
+        UE_LOG(LogTemp, Error, TEXT("CheckInDesk: ProcessCheckIn called on client! This should never happen."));
         return;
     }
     
@@ -181,11 +185,12 @@ void ACheckInDesk::Server_ProcessCheckIn_Implementation(APawn* Clerk, FGuestChec
     CurrentClerk = nullptr;
     
     // Serve next guest in queue
-    Server_ServeNextGuest();
+    ServeNextGuest();
 }
 
-void ACheckInDesk::Server_ServeNextGuest_Implementation()
+void ACheckInDesk::ServeNextGuest()
 {
+    // Server only
     if (!HasAuthority())
     {
         return;
@@ -235,7 +240,8 @@ ARoomActor* ACheckInDesk::FindAvailableRoom()
 
 void ACheckInDesk::OnDeskInteracted(APawn* Interactor)
 {
-    // Open check-in UI for player
+    // Called locally when player presses E
+    // Just opens UI locally, doesn't call server
     OpenCheckInUI(Interactor);
 }
 

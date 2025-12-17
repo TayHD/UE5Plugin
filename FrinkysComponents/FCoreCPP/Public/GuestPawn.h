@@ -2,17 +2,15 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/Pawn.h"
+#include "GameFramework/Character.h"
 #include "GuestData.h"
-#include "GameFramework/FloatingPawnMovement.h"
-#include "Components/CapsuleComponent.h"
 #include "GuestPawn.generated.h"
 
 // Forward declarations
 class ARoomActor;
 class AGuestAIController;
 
-// ENUM MUST BE DECLARED BEFORE DELEGATE USES IT
+// ENUM MUST BE DECLARED FIRST
 UENUM(BlueprintType)
 enum class EGuestBehaviorState : uint8
 {
@@ -27,33 +25,19 @@ enum class EGuestBehaviorState : uint8
     Panicked        UMETA(DisplayName = "Panicked")
 };
 
-// NOW the delegate can use the enum
+// NOW declare the delegate (after the enum)
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnGuestStateChanged, class AGuestPawn*, Guest, EGuestBehaviorState, NewState);
 
 UCLASS()
-class FCORECPP_API AGuestPawn : public APawn
+class FCORECPP_API AGuestPawn : public ACharacter
 {
     GENERATED_BODY()
     
 public:
     AGuestPawn();
-
-    UPROPERTY(EditDefaultsOnly, Category = "AI")
-    TSubclassOf<AGuestAIController> AIControllerClass;
     
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
     virtual void BeginPlay() override;
-    
-    // ===== COMPONENTS =====
-    
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-    UCapsuleComponent* CapsuleComponent;
-    
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-    USkeletalMeshComponent* GuestMesh;
-    
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-    UFloatingPawnMovement* MovementComponent;
     
     // ===== GUEST DATA =====
     

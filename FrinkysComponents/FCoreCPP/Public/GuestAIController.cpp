@@ -110,9 +110,9 @@ void AGuestAIController::MoveToExit()
     }
 }
 
-void AGuestAIController::StopMovement()
+void AGuestAIController::StopGuestMovement()
 {
-    StopMovement();
+    StopMovement(); // Call base class function
     
     if (ControlledGuest)
     {
@@ -121,14 +121,14 @@ void AGuestAIController::StopMovement()
     }
 }
 
-void AGuestAIController::OnMoveCompleted(FAIRequestID RequestID, EPathFollowingResult::Type Result)
+void AGuestAIController::OnMoveCompleted(FAIRequestID RequestID, const FPathFollowingResult& Result)
 {
     if (!ControlledGuest)
     {
         return;
     }
     
-    switch (Result)
+    switch (Result.Code)
     {
         case EPathFollowingResult::Success:
         {
@@ -144,7 +144,7 @@ void AGuestAIController::OnMoveCompleted(FAIRequestID RequestID, EPathFollowingR
                 ACheckInDesk* Desk = FindCheckInDesk();
                 if (Desk)
                 {
-                    Desk->Server_AddGuestToQueue(ControlledGuest);
+                    Desk->AddGuestToQueue(ControlledGuest);
                 }
             }
             else if (CurrentState == EGuestBehaviorState::GoingToRoom)
@@ -173,6 +173,8 @@ void AGuestAIController::OnMoveCompleted(FAIRequestID RequestID, EPathFollowingR
                    *ControlledGuest->GetGuestData().GuestName);
             break;
         }
+        default:
+            break;
     }
 }
 

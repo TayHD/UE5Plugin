@@ -1,8 +1,8 @@
 ﻿// DoorActor.cpp
 #include "DoorActor.h"
-#include "RoomActor.h"
+#include "HotelPlayerController.h"
+#include "Components/BoxComponent.h"
 #include "Net/UnrealNetwork.h"
-#include "TimerManager.h"
 
 ADoorActor::ADoorActor()
 {
@@ -19,15 +19,23 @@ ADoorActor::ADoorActor()
     DoorFrame->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     DoorFrame->SetCollisionResponseToAllChannels(ECR_Block);
     
-    // Create hinge pivot (this is what rotates)
+    // Create hinge pivot (movable)
     HingePivot = CreateDefaultSubobject<USceneComponent>(TEXT("HingePivot"));
     HingePivot->SetupAttachment(DoorRoot);
     HingePivot->SetMobility(EComponentMobility::Movable);
     
-    // Create door mesh (attaches to hinge pivot so it rotates around hinge)
+    // Create door mesh (rotates with pivot)
     DoorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DoorMesh"));
-    DoorMesh->SetupAttachment(HingePivot); // Attaches to hinge, not root
-    DoorMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision); // Frame handles collision
+    DoorMesh->SetupAttachment(HingePivot);
+    DoorMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    DoorMesh->SetCollisionResponseToAllChannels(ECR_Block);
+    
+    // Create doorway blocker (moves with door)
+    DoorwayBlocker = CreateDefaultSubobject<UBoxComponent>(TEXT("DoorwayBlocker"));
+    DoorwayBlocker->SetupAttachment(HingePivot);
+    DoorwayBlocker->SetBoxExtent(FVector(50.0f, 5.0f, 100.0f));
+    DoorwayBlocker->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    DoorwayBlocker->SetCollisionResponseToAllChannels(ECR_Block);
     
     // Create interaction point
     InteractionPoint = CreateDefaultSubobject<UFC_InteractionPoint>(TEXT("InteractionPoint"));
@@ -35,26 +43,18 @@ ADoorActor::ADoorActor()
     InteractionPoint->InteractionName = "Open Door";
     InteractionPoint->InteractionTime = 0.0f; // Instant
     
-    // Create doorway blocker (invisible collision)
-    DoorwayBlocker = CreateDefaultSubobject<UBoxComponent>(TEXT("DoorwayBlocker"));
-    DoorwayBlocker->SetupAttachment(HingePivot); // CHANGED: Was DoorRoot, now HingePivot
-    DoorwayBlocker->SetBoxExtent(FVector(10.0f, 50.0f, 100.0f)); // Thin blocking volume
-    DoorwayBlocker->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-    DoorwayBlocker->SetCollisionResponseToAllChannels(ECR_Ignore);
-    DoorwayBlocker->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
-    
     // Initialize state
-    bIsOpen = false;
+    CurrentState = EDoorState::Closed;
     bIsLocked = false;
-    CurrentDoorRotation = 0.0f;
-    TargetDoorRotation = 0.0f;
+    CurrentRotation = 0.0f;
+    TargetRotation = 0.0f;
 }
 
 void ADoorActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
     Super::GetLifetimeReplicatedProps(OutLifetimeProps);
     
-    DOREPLIFETIME(ADoorActor, bIsOpen);
+    DOREPLIFETIME(ADoorActor, CurrentState);
     DOREPLIFETIME(ADoorActor, bIsLocked);
 }
 
@@ -65,28 +65,13 @@ void ADoorActor::BeginPlay()
     // Bind interaction
     if (InteractionPoint)
     {
-        InteractionPoint->OnInteract.AddDynamic(this, &ADoorActor::OnInteracted);
+        InteractionPoint->OnInteract.AddDynamic(this, &ADoorActor::OnDoorInteracted);
     }
     
-    // Apply starting locked state
-    if (bStartsLocked)
+    // Apply initial lock state
+    if (HasAuthority())
     {
-        bIsLocked = true;
-        OnRep_DoorLocked();
-    }
-    
-    // Set initial blocker state
-    if (bIsOpen)
-    {
-        DoorwayBlocker->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        TargetDoorRotation = OpenAngle;
-        CurrentDoorRotation = OpenAngle;
-    }
-    else
-    {
-        DoorwayBlocker->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-        TargetDoorRotation = 0.0f;
-        CurrentDoorRotation = 0.0f;
+        SetLocked(bStartsLocked);
     }
 }
 
@@ -98,169 +83,144 @@ void ADoorActor::Tick(float DeltaTime)
     AnimateDoor(DeltaTime);
 }
 
-void ADoorActor::Server_ToggleDoor_Implementation(APawn* Interactor)
+void ADoorActor::OpenDoor()
 {
+    // Regular function - should only be called on server
     if (!HasAuthority())
     {
+        UE_LOG(LogTemp, Error, TEXT("DoorActor: OpenDoor called on client! This should never happen."));
         return;
     }
     
-    // Can't open if locked
     if (bIsLocked)
     {
-        UE_LOG(LogTemp, Warning, TEXT("Door is locked, cannot open"));
+        UE_LOG(LogTemp, Warning, TEXT("Door: Cannot open - door is locked"));
         return;
     }
     
-    // Toggle state
-    bIsOpen = !bIsOpen;
-    
-    // Determine which side player is on (for opening direction)
-    if (bIsOpen && Interactor)
+    if (CurrentState == EDoorState::Open || CurrentState == EDoorState::Opening)
     {
-        FVector DoorForward = GetActorForwardVector();
-        FVector ToPlayer = (Interactor->GetActorLocation() - GetActorLocation()).GetSafeNormal();
-        float DotProduct = FVector::DotProduct(DoorForward, ToPlayer);
-        
-        // If player is in front of door (positive dot), open away from them (positive angle)
-        // If player is behind door (negative dot), open toward them (negative angle)
-        TargetDoorRotation = (DotProduct > 0.0f) ? OpenAngle : -OpenAngle;
-        
-        UE_LOG(LogTemp, Log, TEXT("Door opening %s player (Dot: %.2f, Angle: %.1f)"), 
-               (DotProduct > 0.0f) ? TEXT("away from") : TEXT("toward"), DotProduct, TargetDoorRotation);
-    }
-    else
-    {
-        // Closing - always return to 0
-        TargetDoorRotation = 0.0f;
+        return; // Already open/opening
     }
     
-    // Trigger replication
-    OnRep_DoorOpen();
+    CurrentState = EDoorState::Opening;
+    TargetRotation = OpenAngle;
     
-    // Setup auto-close timer
-    if (bIsOpen && bAutoClose)
+    // Update interaction prompt
+    if (InteractionPoint)
     {
-        GetWorldTimerManager().SetTimer(AutoCloseTimer, this, &ADoorActor::AutoCloseDoor, AutoCloseDelay, false);
-    }
-    else
-    {
-        GetWorldTimerManager().ClearTimer(AutoCloseTimer);
+        InteractionPoint->InteractionName = "Close Door";
     }
     
-    UE_LOG(LogTemp, Log, TEXT("Door toggled: %s"), bIsOpen ? TEXT("OPEN") : TEXT("CLOSED"));
+    UE_LOG(LogTemp, Log, TEXT("Door: Opening"));
 }
 
-void ADoorActor::Server_SetLocked_Implementation(bool bLocked)
+void ADoorActor::CloseDoor()
 {
+    // Regular function - should only be called on server
     if (!HasAuthority())
     {
+        UE_LOG(LogTemp, Error, TEXT("DoorActor: CloseDoor called on client! This should never happen."));
+        return;
+    }
+    
+    if (CurrentState == EDoorState::Closed || CurrentState == EDoorState::Closing)
+    {
+        return; // Already closed/closing
+    }
+    
+    CurrentState = EDoorState::Closing;
+    TargetRotation = 0.0f;
+    
+    // Update interaction prompt
+    if (InteractionPoint)
+    {
+        InteractionPoint->InteractionName = "Open Door";
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Door: Closing"));
+}
+
+void ADoorActor::SetLocked(bool bLocked)
+{
+    // Regular function - should only be called on server
+    if (!HasAuthority())
+    {
+        UE_LOG(LogTemp, Error, TEXT("DoorActor: SetLocked called on client! This should never happen."));
         return;
     }
     
     bIsLocked = bLocked;
     
-    // If locking, close the door first
-    if (bIsLocked && bIsOpen)
+    // Update interaction point
+    if (InteractionPoint)
     {
-        bIsOpen = false;
-        TargetDoorRotation = 0.0f; // Force close
-        OnRep_DoorOpen();
+        InteractionPoint->isEnabled = !bIsLocked;
+        InteractionPoint->InteractionName = bIsLocked ? "Locked" : (IsOpen() ? "Close Door" : "Open Door");
     }
     
-    // Trigger replication
-    OnRep_DoorLocked();
+    // Disable blocker if open and locked (guest is inside)
+    if (DoorwayBlocker && bIsLocked && IsOpen())
+    {
+        DoorwayBlocker->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
     
     UE_LOG(LogTemp, Log, TEXT("Door lock set: %s"), bIsLocked ? TEXT("LOCKED") : TEXT("UNLOCKED"));
 }
 
-void ADoorActor::Server_SetOpen_Implementation(bool bOpen)
+void ADoorActor::OnRep_DoorState()
 {
-    if (!HasAuthority())
+    // Update visual state on clients when replicated
+    UE_LOG(LogTemp, Log, TEXT("Door state replicated: %d"), (int32)CurrentState);
+}
+
+void ADoorActor::OnDoorInteracted(APawn* Interactor)
+{
+    // Player pressed E - call server RPC on their PlayerController
+    AHotelPlayerController* PC = Cast<AHotelPlayerController>(Interactor->GetController());
+    if (!PC)
     {
+        UE_LOG(LogTemp, Warning, TEXT("Door: Interactor has no HotelPlayerController"));
         return;
     }
     
-    // Can't force open if locked (unless unlocking first)
-    if (bIsLocked && bOpen)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Cannot force open locked door"));
-        return;
-    }
+    // Determine if player wants to open or close
+    bool bWantsOpen = IsClosed();
     
-    bIsOpen = bOpen;
-    TargetDoorRotation = bOpen ? OpenAngle : 0.0f; // Force specific direction when scripted
-    OnRep_DoorOpen();
-}
-
-void ADoorActor::OnRep_DoorOpen()
-{
-    // Update collision blocker
-    if (bIsOpen)
-    {
-        DoorwayBlocker->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        OnDoorOpened.Broadcast(true);
-    }
-    else
-    {
-        DoorwayBlocker->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-        OnDoorClosed.Broadcast(false);
-    }
-    
-    // Update interaction text
-    if (InteractionPoint)
-    {
-        InteractionPoint->InteractionName = bIsOpen ? "Close Door" : "Open Door";
-    }
-}
-
-void ADoorActor::OnRep_DoorLocked()
-{
-    // Update interaction text
-    if (InteractionPoint)
-    {
-        if (bIsLocked)
-        {
-            InteractionPoint->InteractionName = "Locked";
-            InteractionPoint->isEnabled = false; // Can't interact with locked doors
-        }
-        else
-        {
-            InteractionPoint->InteractionName = bIsOpen ? "Close Door" : "Open Door";
-            InteractionPoint->isEnabled = true;
-        }
-    }
-    
-    // Broadcast event
-    OnDoorLockChanged.Broadcast(bIsLocked);
-}
-
-void ADoorActor::OnInteracted(APawn* Interactor)
-{
-    // Call server to toggle door
-    Server_ToggleDoor(Interactor);
+    // Call server RPC on player's controller
+    PC->Server_RequestDoorInteraction(this, bWantsOpen);
 }
 
 void ADoorActor::AnimateDoor(float DeltaTime)
 {
-    // Smoothly interpolate to target rotation
-    if (!FMath::IsNearlyEqual(CurrentDoorRotation, TargetDoorRotation, 0.1f))
+    // Smoothly rotate door to target
+    if (FMath::IsNearlyEqual(CurrentRotation, TargetRotation, 0.1f))
     {
-        CurrentDoorRotation = FMath::FInterpTo(CurrentDoorRotation, TargetDoorRotation, DeltaTime, DoorOpenSpeed);
+        // Reached target
+        CurrentRotation = TargetRotation;
         
-        // Apply rotation to hinge pivot (which rotates the door mesh)
-        if (HingePivot)
+        // Update state
+        if (HasAuthority())
         {
-            FRotator NewRotation = FRotator(0.0f, CurrentDoorRotation, 0.0f);
-            HingePivot->SetRelativeRotation(NewRotation);
+            if (CurrentState == EDoorState::Opening)
+            {
+                CurrentState = EDoorState::Open;
+            }
+            else if (CurrentState == EDoorState::Closing)
+            {
+                CurrentState = EDoorState::Closed;
+            }
         }
     }
-}
-
-void ADoorActor::AutoCloseDoor()
-{
-    if (bIsOpen && !bIsLocked)
+    else
     {
-        Server_SetOpen(false);
+        // Interpolate rotation
+        CurrentRotation = FMath::FInterpTo(CurrentRotation, TargetRotation, DeltaTime, OpenSpeed);
+    }
+    
+    // Apply rotation to hinge pivot
+    if (HingePivot)
+    {
+        HingePivot->SetRelativeRotation(FRotator(0.0f, CurrentRotation, 0.0f));
     }
 }

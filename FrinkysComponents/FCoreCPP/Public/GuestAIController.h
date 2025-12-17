@@ -36,9 +36,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Guest AI")
 	void MoveToExit();
     
-	// Stop all movement
+	// Stop all movement (renamed to avoid conflict with base class)
 	UFUNCTION(BlueprintCallable, Category = "Guest AI")
-	void StopMovement();
+	void StopGuestMovement();
     
 	// ===== REFERENCES =====
     
@@ -51,9 +51,8 @@ public:
 	float AcceptanceRadius = 100.0f; // How close to get to destination
     
 private:
-	// Movement completion callbacks
-	UFUNCTION()
-	void OnMoveCompleted(FAIRequestID RequestID, EPathFollowingResult::Type Result);
+	// Movement completion callbacks (NO UFUNCTION - raw C++ delegate)
+	void OnMoveCompleted(FAIRequestID RequestID, const FPathFollowingResult& Result);
     
 	// Find the check-in desk in the level
 	ACheckInDesk* FindCheckInDesk();

@@ -2,6 +2,8 @@
 #include "GuestPawn.h"
 #include "RoomActor.h"
 #include "GuestAIController.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
@@ -10,21 +12,22 @@ AGuestPawn::AGuestPawn()
     PrimaryActorTick.bCanEverTick = false;
     bReplicates = true;
     
-    // Create capsule component
-    CapsuleComponent = CreateDefaultSubobject<UCapsuleComponent>(TEXT("CapsuleComponent"));
-    CapsuleComponent->InitCapsuleSize(42.0f, 96.0f);
-    CapsuleComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-    CapsuleComponent->SetCollisionResponseToAllChannels(ECR_Block);
-    RootComponent = CapsuleComponent;
+    // Configure capsule (ACharacter already has this)
+    GetCapsuleComponent()->InitCapsuleSize(42.0f, 96.0f);
     
-    // Create skeletal mesh
-    GuestMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("GuestMesh"));
-    GuestMesh->SetupAttachment(CapsuleComponent);
-    GuestMesh->SetRelativeLocation(FVector(0.0f, 0.0f, -96.0f)); // Offset to feet
+    // Configure mesh (ACharacter already has this)
+    GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -96.0f)); // Offset to feet
+    GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f)); // Face forward
     
-    // Create movement component
-    MovementComponent = CreateDefaultSubobject<UFloatingPawnMovement>(TEXT("MovementComponent"));
-    MovementComponent->MaxSpeed = WalkSpeed;
+    // Configure movement (ACharacter already has this)
+    GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+    GetCharacterMovement()->bOrientRotationToMovement = true; // Face direction of movement
+    GetCharacterMovement()->RotationRate = FRotator(0.0f, 540.0f, 0.0f); // Smooth rotation
+    
+    // Don't rotate controller with character
+    bUseControllerRotationPitch = false;
+    bUseControllerRotationYaw = false;
+    bUseControllerRotationRoll = false;
     
     // Initialize state
     CurrentBehaviorState = EGuestBehaviorState::Approaching;
@@ -98,7 +101,7 @@ void AGuestPawn::Server_SetBehaviorState_Implementation(EGuestBehaviorState NewS
         case EGuestBehaviorState::InRoom:
             if (AIController)
             {
-                AIController->StopMovement();
+                AIController->StopGuestMovement();
             }
             if (AssignedRoom)
             {
@@ -184,18 +187,18 @@ void AGuestPawn::OnRep_BehaviorState()
     OnBehaviorStateChanged.Broadcast(this, CurrentBehaviorState);
     
     // Update movement speed based on state
-    if (MovementComponent)
+    if (GetCharacterMovement())
     {
         switch (CurrentBehaviorState)
         {
             case EGuestBehaviorState::Panicked:
-                MovementComponent->MaxSpeed = WalkSpeed * 2.0f; // Run when panicked
+                GetCharacterMovement()->MaxWalkSpeed = WalkSpeed * 2.0f; // Run when panicked
                 break;
             case EGuestBehaviorState::InRoom:
-                MovementComponent->MaxSpeed = 0.0f; // Don't move in room
+                GetCharacterMovement()->MaxWalkSpeed = 0.0f; // Don't move in room
                 break;
             default:
-                MovementComponent->MaxSpeed = WalkSpeed;
+                GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
                 break;
         }
     }

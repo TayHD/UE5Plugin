@@ -86,21 +86,22 @@ public:
     
     // ===== FUNCTIONS =====
     
-    // Guest arrives at desk, joins queue
-    UFUNCTION(BlueprintCallable, Server, Reliable, Category = "Check-In")
-    void Server_AddGuestToQueue(AGuestPawn* Guest);
+    // Guest arrives at desk, joins queue (called by AI on server)
+    UFUNCTION(BlueprintCallable, Category = "Check-In")
+    void AddGuestToQueue(AGuestPawn* Guest);
     
-    // Player interacts with desk to serve guest
+    // Player interacts with desk to serve guest (called locally, opens UI)
     UFUNCTION(BlueprintCallable, Category = "Check-In")
     void OpenCheckInUI(APawn* Clerk);
     
-    // Player approves/denies check-in
-    UFUNCTION(BlueprintCallable, Server, Reliable, Category = "Check-In")
-    void Server_ProcessCheckIn(APawn* Clerk, FGuestCheckInResponse Response);
+    // Process check-in (called by PlayerController's Server RPC on server)
+    // NOT an RPC - just a regular function that runs on server
+    UFUNCTION(BlueprintCallable, Category = "Check-In")
+    void ProcessCheckIn(APawn* Clerk, FGuestCheckInResponse Response);
     
-    // Move to next guest in queue
-    UFUNCTION(BlueprintCallable, Server, Reliable, Category = "Check-In")
-    void Server_ServeNextGuest();
+    // Move to next guest in queue (server only)
+    UFUNCTION(BlueprintCallable, Category = "Check-In")
+    void ServeNextGuest();
     
     // Get first available clean room
     UFUNCTION(BlueprintCallable, Category = "Check-In")
