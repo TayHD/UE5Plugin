@@ -8,6 +8,7 @@
 // Forward declarations
 class ADoorActor;
 class AGuestPawn;
+class UBoxComponent;  // ADD THIS LINE
 
 UENUM(BlueprintType)
 enum class ERoomState : uint8

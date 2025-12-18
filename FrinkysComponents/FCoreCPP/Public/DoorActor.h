@@ -3,16 +3,19 @@
 
 #include "CoreMinimal.h"
 #include "InteractableActor.h"
-#include "Components/BoxComponent.h"
 #include "DoorActor.generated.h"
+
+// Forward declarations
+class UStaticMeshComponent;
+class UNavModifierComponent;
 
 UENUM(BlueprintType)
 enum class EDoorState : uint8
 {
-    Closed      UMETA(DisplayName = "Closed"),
-    Opening     UMETA(DisplayName = "Opening"),
-    Open        UMETA(DisplayName = "Open"),
-    Closing     UMETA(DisplayName = "Closing")
+    Closed  UMETA(DisplayName = "Closed"),
+    Opening UMETA(DisplayName = "Opening"),
+    Open    UMETA(DisplayName = "Open"),
+    Closing UMETA(DisplayName = "Closing")
 };
 
 UCLASS()
@@ -30,76 +33,68 @@ public:
     // ===== COMPONENTS =====
     
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-    UStaticMeshComponent* DoorFrame;
-    
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-    USceneComponent* HingePivot; // Pivot point for rotation
-    
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     UStaticMeshComponent* DoorMesh;
     
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-    UBoxComponent* DoorwayBlocker; // Blocks doorway when closed
+    UStaticMeshComponent* DoorFrame;
     
-    // ===== STATE =====
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    UNavModifierComponent* NavModifier;
+    
+    // ===== PROPERTIES =====
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Door")
+    float OpenAngle = 90.0f;
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Door")
+    float OpenSpeed = 2.0f;
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Door")
+    float AutoCloseDelay = 3.0f;
+    
+    // ===== STATE (Replicated) =====
     
     UPROPERTY(ReplicatedUsing=OnRep_DoorState, BlueprintReadOnly, Category = "Door State")
     EDoorState CurrentState;
     
-    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Door State")
+    UPROPERTY(ReplicatedUsing=OnRep_Locked, BlueprintReadOnly, Category = "Door State")
     bool bIsLocked;
     
-    // Replicated rotation values so clients can animate smoothly
-    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Door State")
-    float CurrentRotation; // Current door rotation
+    // ===== INTERACTION (from InteractableActor) =====
     
-    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Door State")
-    float TargetRotation; // Target rotation based on state
+    virtual void StartInteraction_Implementation(APawn* InteractingPawn) override;
+    virtual bool CanInteract_Implementation(APawn* InteractingPawn) const override;
     
-    // ===== SETTINGS =====
-    
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Door Settings")
-    float OpenAngle = 90.0f; // How far door opens (degrees)
-    
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Door Settings")
-    float OpenSpeed = 2.0f; // How fast door opens
-    
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Door Settings")
-    bool bStartsLocked = false;
-    
-    // ===== FUNCTIONS =====
-    
-    // Door-specific functions
-    UFUNCTION(BlueprintCallable, Category = "Door")
-    void OpenDoor();
+    // ===== DOOR FUNCTIONS =====
     
     UFUNCTION(BlueprintCallable, Category = "Door")
-    void CloseDoor();
+    void Open();
+    
+    UFUNCTION(BlueprintCallable, Category = "Door")
+    void Close();
     
     UFUNCTION(BlueprintCallable, Category = "Door")
     void SetLocked(bool bLocked);
     
-    // Query functions
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Door")
-    bool IsOpen() const { return CurrentState == EDoorState::Open || CurrentState == EDoorState::Opening; }
-    
-    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Door")
-    bool IsClosed() const { return CurrentState == EDoorState::Closed || CurrentState == EDoorState::Closing; }
+    bool IsOpen() const { return CurrentState == EDoorState::Open; }
     
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Door")
     bool IsLocked() const { return bIsLocked; }
-    
-    // ===== OVERRIDE INTERACTABLE FUNCTIONS =====
-    
-    virtual void OnInteractionStarted_Implementation(AActor* Interactor) override;
-    virtual bool CanInteract(AActor* Interactor) const override;
     
     // ===== REPLICATION CALLBACKS =====
     
     UFUNCTION()
     void OnRep_DoorState();
     
-private:
-    // Animation (runs on all machines)
-    void AnimateDoor(float DeltaTime);
+    UFUNCTION()
+    void OnRep_Locked();
+    
+protected:
+    FRotator ClosedRotation;
+    FRotator OpenRotation;
+    FTimerHandle AutoCloseTimer;
+    
+    void UpdateDoorRotation(float DeltaTime);
+    void ScheduleAutoClose();
 };
